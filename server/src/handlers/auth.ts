@@ -1,45 +1,112 @@
 
+import { db } from '../db';
+import { usersTable } from '../db/schema';
 import { type CreateUserInput, type LoginInput, type User } from '../schema';
+import { eq } from 'drizzle-orm';
+
+// Simple password hashing using Bun's built-in crypto
+const hashPassword = async (password: string): Promise<string> => {
+  return await Bun.password.hash(password);
+};
+
+const verifyPassword = async (password: string, hash: string): Promise<boolean> => {
+  return await Bun.password.verify(password, hash);
+};
+
+// Simple JWT creation (in production, use a proper JWT library)
+const createJWT = (userId: number, email: string): string => {
+  const payload = {
+    userId,
+    email,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
+  };
+  
+  // In production, use proper JWT signing with a secret key
+  return Buffer.from(JSON.stringify(payload)).toString('base64');
+};
 
 export const createUser = async (input: CreateUserInput): Promise<User> => {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is creating a new user account with hashed password.
-  // Should validate email uniqueness and hash the password before storing.
-  return Promise.resolve({
-    id: 0,
-    email: input.email,
-    password_hash: 'hashed_password_placeholder',
-    first_name: input.first_name,
-    last_name: input.last_name,
-    phone: input.phone,
-    role: input.role || 'guest',
-    created_at: new Date(),
-    updated_at: new Date()
-  } as User);
+  try {
+    // Check if user with email already exists
+    const existingUser = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.email, input.email))
+      .limit(1)
+      .execute();
+
+    if (existingUser.length > 0) {
+      throw new Error('User with this email already exists');
+    }
+
+    // Hash the password
+    const passwordHash = await hashPassword(input.password);
+
+    // Insert new user
+    const result = await db.insert(usersTable)
+      .values({
+        email: input.email,
+        password_hash: passwordHash,
+        first_name: input.first_name,
+        last_name: input.last_name,
+        phone: input.phone,
+        role: input.role || 'guest'
+      })
+      .returning()
+      .execute();
+
+    return result[0];
+  } catch (error) {
+    console.error('User creation failed:', error);
+    throw error;
+  }
 };
 
 export const loginUser = async (input: LoginInput): Promise<{ user: User; token: string }> => {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is authenticating user login and returning user data with JWT token.
-  // Should verify email exists, compare hashed password, and generate JWT.
-  return Promise.resolve({
-    user: {
-      id: 1,
-      email: input.email,
-      password_hash: 'hashed_password',
-      first_name: 'John',
-      last_name: 'Doe',
-      phone: null,
-      role: 'guest',
-      created_at: new Date(),
-      updated_at: new Date()
-    } as User,
-    token: 'jwt_token_placeholder'
-  });
+  try {
+    // Find user by email
+    const users = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.email, input.email))
+      .limit(1)
+      .execute();
+
+    if (users.length === 0) {
+      throw new Error('Invalid email or password');
+    }
+
+    const user = users[0];
+
+    // Verify password
+    const passwordValid = await verifyPassword(input.password, user.password_hash);
+    if (!passwordValid) {
+      throw new Error('Invalid email or password');
+    }
+
+    // Generate JWT token
+    const token = createJWT(user.id, user.email);
+
+    return {
+      user,
+      token
+    };
+  } catch (error) {
+    console.error('Login failed:', error);
+    throw error;
+  }
 };
 
 export const getUserById = async (id: number): Promise<User | null> => {
-  // This is a placeholder declaration! Real code should be implemented here.
-  // The goal of this handler is fetching a user by their ID.
-  return Promise.resolve(null);
+  try {
+    const users = await db.select()
+      .from(usersTable)
+      .where(eq(usersTable.id, id))
+      .limit(1)
+      .execute();
+
+    return users.length > 0 ? users[0] : null;
+  } catch (error) {
+    console.error('Get user by ID failed:', error);
+    throw error;
+  }
 };
